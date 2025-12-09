@@ -647,31 +647,35 @@ class VideoCutWindow(QMainWindow):
         self.folder_label.setStyleSheet("color: #aaa; font-size: 12px;")
         folder_btn = QPushButton("选择文件夹")
         folder_btn.clicked.connect(self._select_folder)
+        folder_btn.setStyleSheet("QPushButton { color: white; padding: 8px 20px; font-size: 13px; background-color: #2196F3; } QPushButton:hover { background-color: #1976D2; }")
         folder_layout.addWidget(self.folder_label, 1)
         folder_layout.addWidget(folder_btn)
         left_layout.addLayout(folder_layout)
 
         # 源视频列表
         source_label = QLabel("源视频")
-        source_label.setStyleSheet("color: #4CAF50; font-weight: bold; padding: 5px 0;")
+        source_label.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 16px; padding: 5px 0;")
         left_layout.addWidget(source_label)
 
         self.file_list = QListWidget()
         self.file_list.setStyleSheet("QListWidget { background-color: #2a2a2a; border: 1px solid #444; }"
                                       "QListWidget::item { padding: 8px; }"
-                                      "QListWidget::item:selected { background-color: #4a4a4a; }")
+                                      "QListWidget::item:selected { background-color: #4CAF50; }")
         self.file_list.itemClicked.connect(self._on_file_selected)
         left_layout.addWidget(self.file_list)
 
         # 生成视频列表
-        generated_label = QLabel("生成视频")
-        generated_label.setStyleSheet("color: #2196F3; font-weight: bold; padding: 5px 0;")
+        generated_label = QLabel("生成视频（右键打开文件夹）")
+        generated_label.setStyleSheet("color: #2196F3; font-weight: bold; font-size: 16px; padding: 5px 0;")
         left_layout.addWidget(generated_label)
 
         self.generated_list = QListWidget()
         self.generated_list.setStyleSheet("QListWidget { background-color: #2a2a2a; border: 1px solid #444; }"
-                                           "QListWidget::item { padding: 5px; }"
-                                           "QListWidget::item:selected { background-color: #4a4a4a; }")
+                                           "QListWidget::item { padding: 8px; }"
+                                           "QListWidget::item:selected { background-color: #4CAF50; }")
+        self.generated_list.itemClicked.connect(self._on_generated_selected)
+        self.generated_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.generated_list.customContextMenuRequested.connect(self._on_generated_right_click)
         left_layout.addWidget(self.generated_list)
 
         left_panel.setFixedWidth(250)
@@ -699,7 +703,7 @@ class VideoCutWindow(QMainWindow):
         main_layout.addWidget(right_panel, 1)
 
         # 预览区域 (支持区域选择)
-        preview_group = QGroupBox("视频预览 (拖动绿色方块调整裁剪区域)")
+        preview_group = QGroupBox()
         preview_layout = QVBoxLayout(preview_group)
 
         self.preview_label = CropLabel()
@@ -910,36 +914,24 @@ class VideoCutWindow(QMainWindow):
                           key=lambda x: x.stat().st_mtime, reverse=True)
             for f in files:
                 if f.is_file() and f.suffix.lower() in video_extensions:
-                    self._add_generated_item(f)
+                    item = QListWidgetItem(f.name)
+                    item.setData(Qt.UserRole, str(f))
+                    self.generated_list.addItem(item)
 
-    def _add_generated_item(self, file_path):
-        """添加生成视频列表项（带打开文件夹按钮）"""
-        item_widget = QWidget()
-        item_widget.setFixedHeight(36)
-        item_layout = QHBoxLayout(item_widget)
-        item_layout.setContentsMargins(5, 4, 5, 4)
-        item_layout.setSpacing(5)
+    def _on_generated_selected(self, item):
+        """生成视频列表点击"""
+        path = item.data(Qt.UserRole)
+        if path:
+            self.file_list.clearSelection()
+            self._load_video(path)
 
-        # 文件名标签（可点击）
-        name_btn = QPushButton(file_path.name)
-        name_btn.setStyleSheet("QPushButton { text-align: left; border: none; color: white; padding: 5px; font-size: 13px; }"
-                               "QPushButton:hover { background-color: #3a3a3a; }")
-        name_btn.clicked.connect(lambda: self._load_video(str(file_path)))
-        item_layout.addWidget(name_btn, 1)
-
-        # 打开文件夹按钮
-        open_btn = QPushButton("📁")
-        open_btn.setFixedSize(30, 26)
-        open_btn.setStyleSheet("QPushButton { border: none; font-size: 14px; } QPushButton:hover { background-color: #3a3a3a; }")
-        open_btn.setToolTip("在文件浏览器中查看")
-        open_btn.clicked.connect(lambda: self._open_in_explorer(str(file_path)))
-        item_layout.addWidget(open_btn)
-
-        # 添加到列表
-        item = QListWidgetItem()
-        item.setSizeHint(item_widget.sizeHint())
-        self.generated_list.addItem(item)
-        self.generated_list.setItemWidget(item, item_widget)
+    def _on_generated_right_click(self, pos):
+        """生成视频列表右键 - 在文件浏览器中打开"""
+        item = self.generated_list.itemAt(pos)
+        if item:
+            path = item.data(Qt.UserRole)
+            if path:
+                self._open_in_explorer(path)
 
     def _open_in_explorer(self, file_path):
         """在文件浏览器中打开文件所在位置"""
@@ -956,6 +948,7 @@ class VideoCutWindow(QMainWindow):
         """文件列表点击"""
         path = item.data(Qt.UserRole)
         if path:
+            self.generated_list.clearSelection()
             self._load_video(path)
 
     def _load_video(self, path):
@@ -979,8 +972,15 @@ class VideoCutWindow(QMainWindow):
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+        # 计算视频总时长
+        total_seconds = self.total_frames / self.fps
+        hours = int(total_seconds // 3600)
+        minutes = int((total_seconds % 3600) // 60)
+        seconds = int(total_seconds % 60)
+        duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
         self.file_label.setText(
-            f"{Path(path).name} ({self.width}x{self.height}, {self.fps:.1f}fps, {self.total_frames}帧)"
+            f"{Path(path).name} ({self.width}x{self.height}, {self.fps:.1f}fps, {duration_str}, {self.total_frames}帧)"
         )
         self.file_label.setStyleSheet("color: white;")
 
